@@ -34,10 +34,10 @@ for (const eid of ids) {
   const cd = raw.compose[eid], ud = raw.upgrade[eid];
   const eq = equipById[eid] || {};
   const o = { id: +eid, name: cd?.name || ud?.name || eq.name || eid, pos: POS[eq.position] || '其他' };
-  if (cd && !cd.__error) {
-    o.compose = { zeny: cd.zeny || 0, mats: (cd.cost || []).map(c => ({ id: +c.id, name: c.name, rank: +c.rank || 1, num: c.num })) };
+  if (cd && !cd.__error && !cd.__none && (cd.cost || []).length) {
+    o.compose = { zeny: cd.zeny || 0, mats: cd.cost.map(c => ({ id: +c.id, name: c.name, rank: +c.rank || 1, num: c.num })) };
   }
-  if (ud && !ud.__error && (ud.upgradeMaterial || []).length) {
+  if (ud && !ud.__error && !ud.__none && (ud.upgradeMaterial || []).length) {
     o.upgrade = {
       stages: ud.upgradeMaterial.map(lvl => lvl.map(m => ({ id: +m.id, name: m.name, rank: +m.rank || 1, num: m.num }))),
     };
@@ -48,7 +48,7 @@ for (const eid of ids) {
 // ---- 帽子（只有製作材料）----
 for (const it of (raw.hatList || [])) {
   const cd = raw.hatCompose[it.id];
-  if (!cd || cd.__error || !(cd.cost || []).length) continue;
+  if (!cd || cd.__error || cd.__none || !(cd.cost || []).length) continue;
   equips.push({
     id: +it.id, name: cd.name || it.name, pos: '帽子',
     compose: { zeny: cd.zeny || 0, mats: cd.cost.map(c => ({ id: +c.id, name: c.name, rank: +c.rank || 1, num: c.num })) },
