@@ -55,6 +55,8 @@ for (const it of (raw.hatList || [])) {
   });
 }
 equips.sort((a, b) => a.name.localeCompare(b.name, 'zh'));
+// 分類：頭飾 / ★裝 / 一般裝備
+for (const e of equips) e.cat = e.pos === '帽子' ? 'hat' : (e.name.includes('★') ? 'star' : 'gear');
 
 // 升級逐階 → 加總成不重複材料（供反查與成本）
 function aggUpgrade(e) {
@@ -176,7 +178,9 @@ const html = `<!DOCTYPE html>
   <div class="sub" id="stats"></div>
   <div class="tabs">
     <div class="tab on" data-tab="mat">材料找裝備</div>
-    <div class="tab" data-tab="eq">裝備估價</div>
+    <div class="tab" data-tab="gear">裝備估價</div>
+    <div class="tab" data-tab="star">★裝估價</div>
+    <div class="tab" data-tab="hat">頭飾估價</div>
   </div>
 </header>
 <div class="prices" id="prices"><span class="lbl">每種顏色材料單價 (z)：</span></div>
@@ -200,7 +204,8 @@ const $=id=>document.getElementById(id);
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const fmt=n=>Math.round(n).toLocaleString('en-US');
 const fmtNum=n=>n>=10000?(n/10000).toFixed(n%10000?1:0)+'萬':n.toLocaleString('en-US');
-$('stats').textContent=DB.stats.materials+' 種材料 · '+DB.stats.composeEquip+' 件可製作 · '+DB.stats.upgradeEquip+' 件可升級 · 含帽子 '+DB.stats.hats+' 頂 · 共 '+DB.stats.totalEquip+' 件（已排除神器）';
+const _gN=DB.equips.filter(e=>e.cat==='gear').length,_sN=DB.equips.filter(e=>e.cat==='star').length,_hN=DB.equips.filter(e=>e.cat==='hat').length;
+$('stats').textContent='裝備 '+_gN+' · ★裝 '+_sN+' · 頭飾 '+_hN+' · 材料 '+DB.stats.materials+' 種（繁中，已排除神器）';
 
 // ---- 顏色單價（預設值 + localStorage 記憶）----
 const PKEY='ro_color_prices_v2';
@@ -253,32 +258,37 @@ function recipe(e, kind){
 // ---- 分頁狀態 ----
 let TAB='mat', kw='', mFilter='all', eMethod='all', ePos='all', eSort='cost-desc', sel=null;
 
+const TABNAME={gear:'裝備',star:'★裝',hat:'頭飾'};
 function setTab(t){
-  TAB=t; sel=null; kw='';
+  TAB=t; sel=null; kw=''; eMethod='all'; ePos='all';
   document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on',x.dataset.tab===t));
   $('q').value='';
-  $('q').placeholder=t==='mat'?'輸入材料名稱… 例：神之金屬、深淵花':'輸入裝備／帽子名稱…';
+  $('q').placeholder=t==='mat'?'輸入材料名稱… 例：神之金屬、深淵花':('輸入'+TABNAME[t]+'名稱…');
   buildControls(); renderList();
   $('right').innerHTML='<div class="empty">'+(t==='mat'
     ?'← 從左側點一個材料，看看哪些裝備會用到它（卡片內含該裝備的完整材料與加總成本）'
-    :'← 從左側點一件裝備，依你填的顏色單價估算製作／升級總花費（升級逐階列出）')+'</div>';
+    :'← 從左側點一件'+TABNAME[t]+'，依你填的顏色單價估算製作／升級總花費（升級逐階列出）')+'</div>';
   $('right').classList.remove('show');
 }
 function buildControls(){
   const c1=$('chips'), c2=$('chips2');
+  const sortSel='<select id="sortsel">'+
+    [['cost-desc','估價：高→低'],['cost-asc','估價：低→高'],['name','名稱']]
+    .map(o=>'<option value="'+o[0]+'"'+(eSort===o[0]?' selected':'')+'>'+o[1]+'</option>').join('')+'</select>';
   if(TAB==='mat'){
     c1.innerHTML=['all:全部','compose:製作材料','upgrade:升級材料']
       .map(s=>{const[v,l]=s.split(':');return '<span class="chip'+(mFilter===v?' on':'')+'" data-f="'+v+'">'+l+'</span>';}).join('');
     c2.innerHTML='';
-  }else{
+  }else if(TAB==='hat'){
+    c1.innerHTML='';                       // 頭飾只有製作，不需製作/升級切換、不需部位
+    c2.innerHTML=sortSel;
+    $('sortsel').onchange=e=>{eSort=e.target.value;renderList();};
+  }else{                                    // gear / star
     c1.innerHTML=['all:全部','compose:製作','upgrade:升級']
       .map(s=>{const[v,l]=s.split(':');return '<span class="chip'+(eMethod===v?' on':'')+'" data-m="'+v+'">'+l+'</span>';}).join('');
-    const poss=[...new Set(DB.equips.map(e=>e.pos))];
+    const poss=[...new Set(DB.equips.filter(e=>e.cat===TAB).map(e=>e.pos))];
     c2.innerHTML='<select id="possel"><option value="all">全部部位</option>'+
-      poss.map(p=>'<option value="'+p+'"'+(ePos===p?' selected':'')+'>'+p+'</option>').join('')+'</select>'+
-      '<select id="sortsel">'+
-      [['cost-desc','估價：高→低'],['cost-asc','估價：低→高'],['name','名稱']]
-      .map(o=>'<option value="'+o[0]+'"'+(eSort===o[0]?' selected':'')+'>'+o[1]+'</option>').join('')+'</select>';
+      poss.map(p=>'<option value="'+p+'"'+(ePos===p?' selected':'')+'>'+p+'</option>').join('')+'</select>'+sortSel;
     $('possel').onchange=e=>{ePos=e.target.value;renderList();};
     $('sortsel').onchange=e=>{eSort=e.target.value;renderList();};
   }
@@ -352,6 +362,7 @@ function eqTotalFor(e){
 }
 function visEquips(){
   let es=DB.equips.filter(e=>{
+    if(e.cat!==TAB)return false;
     if(eMethod==='compose'&&!e.compose)return false;
     if(eMethod==='upgrade'&&!e.upgrade)return false;
     if(ePos!=='all'&&e.pos!==ePos)return false;
