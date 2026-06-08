@@ -278,33 +278,33 @@ function renderMatDetail(m){
 }
 
 // ---------- 裝備分頁 ----------
-function eqTotalFor(e){
-  if(eMethod==='compose')return e.compose?calcMats(e.compose.mats,e.compose.zeny).total:-1;
-  if(eMethod==='upgrade')return e.upgrade?calcMats(aggStages(e),0).total:-1;
-  let t=0; if(e.compose)t+=calcMats(e.compose.mats,e.compose.zeny).total; if(e.upgrade)t+=calcMats(aggStages(e),0).total; return t;
+function costOf(e,kind){
+  if(kind==='compose')return e.compose?calcMats(e.compose.mats,e.compose.zeny).total:0;
+  return e.upgrade?calcMats(aggStages(e),0).total:0;
 }
-function visEquips(){
-  let es=DB.equips.filter(e=>{
-    if(e.cat!==TAB)return false;
-    if(eMethod==='compose'&&!e.compose)return false;
-    if(eMethod==='upgrade'&&!e.upgrade)return false;
-    if(ePos!=='all'&&e.pos!==ePos)return false;
-    if(kw&&!e.name.toLowerCase().includes(kw))return false;
-    return true;
-  });
-  if(eSort==='name')es.sort((a,b)=>a.name.localeCompare(b.name,'zh'));
-  else{const dir=eSort==='cost-asc'?1:-1; es=es.map(e=>[e,eqTotalFor(e)]).sort((a,b)=>(a[1]-b[1])*dir).map(x=>x[0]);}
-  return es;
+// 製作與升級各自獨立成一列（一件裝備若兩者皆有，會出現兩列）
+function visPairs(){
+  const ps=[];
+  for(const e of DB.equips){
+    if(e.cat!==TAB)continue;
+    if(ePos!=='all'&&e.pos!==ePos)continue;
+    if(kw&&!e.name.toLowerCase().includes(kw))continue;
+    if((eMethod==='all'||eMethod==='compose')&&e.compose)ps.push({e,kind:'compose',cost:costOf(e,'compose')});
+    if((eMethod==='all'||eMethod==='upgrade')&&e.upgrade)ps.push({e,kind:'upgrade',cost:costOf(e,'upgrade')});
+  }
+  if(eSort==='name')ps.sort((a,b)=>a.e.name.localeCompare(b.e.name,'zh')||a.kind.localeCompare(b.kind));
+  else{const dir=eSort==='cost-asc'?1:-1;ps.sort((a,b)=>(a.cost-b.cost)*dir);}
+  return ps;
 }
 function renderEqList(){
-  const es=visEquips();
-  if(!es.length){$('list').innerHTML='<div class="empty" style="margin-top:30px">找不到符合的裝備</div>';return;}
-  $('list').innerHTML=es.map(e=>{
-    const tot=eqTotalFor(e);
-    return '<div class="row'+(e.id===sel?' sel':'')+'" data-id="'+e.id+'">'+
-      '<div class="nm"><b>'+esc(e.name)+'</b><small>'+e.pos+'</small></div>'+
-      (e.compose?'<span class="badge c">製作</span>':'')+(e.upgrade?'<span class="badge u">升級</span>':'')+
-      '<span class="rowcost">'+(tot>=0?fmt(tot)+'z':'')+'</span></div>';
+  const ps=visPairs();
+  if(!ps.length){$('list').innerHTML='<div class="empty" style="margin-top:30px">找不到符合的項目</div>';return;}
+  $('list').innerHTML=ps.map(p=>{
+    const key=p.e.id+'|'+p.kind;
+    const badge=p.kind==='compose'?'<span class="badge c">製作</span>':'<span class="badge u">升級</span>';
+    return '<div class="row'+(key===sel?' sel':'')+'" data-id="'+p.e.id+'" data-kind="'+p.kind+'">'+
+      '<div class="nm"><b>'+esc(p.e.name)+'</b><small>'+p.e.pos+'</small></div>'+
+      badge+'<span class="rowcost">'+fmt(p.cost)+'z</span></div>';
   }).join('');
 }
 function matTable(matArr,extraZeny){
@@ -319,15 +319,17 @@ function matTable(matArr,extraZeny){
   }).join('');
   return {html:'<table>'+rows+'</table>',...t};
 }
-function renderEqDetail(e){
+function renderEqDetail(e,kind){
+  const showC=(!kind||kind==='compose')&&e.compose;
+  const showU=(!kind||kind==='upgrade')&&e.upgrade;
   let html='<button class="back" id="back">← 返回</button>'+
-    '<div class="dhead"><h2>'+esc(e.name)+'</h2><span class="meta">'+e.pos+'</span></div>';
-  if(e.compose){
+    '<div class="dhead"><h2>'+esc(e.name)+'</h2><span class="meta">'+e.pos+(kind?' · '+(kind==='compose'?'製作':'升級'):'')+'</span></div>';
+  if(showC){
     const t=matTable(e.compose.mats,e.compose.zeny);
     html+='<div class="grp"><h3><span class="dot c"></span>製作材料<span class="gt">'+fmt(t.total)+'z</span></h3>'+t.html+
       '<div class="note">材料 '+fmt(t.matCost)+'z'+(t.zeny?' ＋ Zeny '+fmt(t.zeny)+'z':'')+(t.unpriced?'　⚠ 含未定價顏色':'')+'</div></div>';
   }
-  if(e.upgrade){
+  if(showU){
     const agg=calcMats(aggStages(e),0);
     let stagesHtml='';
     e.upgrade.stages.forEach((lvl,i)=>{
@@ -347,12 +349,12 @@ function renderList(){ TAB==='mat'?renderMatList():renderEqList(); }
 function rerenderRight(){
   if(sel==null)return;
   if(TAB==='mat'){const m=DB.materials.find(x=>x.id===sel); if(m)renderMatDetail(m);}
-  else{const e=EQMAP[sel]; if(e)renderEqDetail(e);}
+  else{const [id,kind]=String(sel).split('|');const e=EQMAP[+id]; if(e)renderEqDetail(e,kind);}
 }
 $('list').addEventListener('click',ev=>{
-  const el=ev.target.closest('.row'); if(!el)return; sel=+el.dataset.id;
-  if(TAB==='mat'){const m=DB.materials.find(x=>x.id===sel);renderMatList();renderMatDetail(m);}
-  else{const e=EQMAP[sel];renderEqList();renderEqDetail(e);}
+  const el=ev.target.closest('.row'); if(!el)return;
+  if(TAB==='mat'){sel=+el.dataset.id;const m=DB.materials.find(x=>x.id===sel);renderMatList();renderMatDetail(m);}
+  else{const id=+el.dataset.id,kind=el.dataset.kind;sel=id+'|'+kind;renderEqList();renderEqDetail(EQMAP[id],kind);}
 });
 $('q').addEventListener('input',e=>{kw=e.target.value.trim().toLowerCase();renderList();});
 function chipClick(e){
