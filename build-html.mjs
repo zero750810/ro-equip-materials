@@ -158,6 +158,8 @@ const html = `<!DOCTYPE html>
   .stage .sh .sc{margin-left:auto;color:var(--gold);font-weight:600}
   .stage table{margin:0}.stage td{padding:6px 11px}
   .note{color:var(--muted);font-size:12px;margin-top:4px}
+  .mchips{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:12px 0 4px}
+  .mchips .sep{width:1px;height:16px;background:var(--line);margin:0 5px}
   .eqcards{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:10px;margin-top:8px}
   .eqcard{border:1px solid var(--line);border-radius:11px;background:var(--panel);padding:11px 13px}
   .eqcard .top{display:flex;align-items:baseline;gap:8px;margin-bottom:7px}
@@ -257,6 +259,8 @@ function recipe(e, kind){
 
 // ---- 分頁狀態 ----
 let TAB='mat', kw='', mFilter='all', eMethod='all', ePos='all', eSort='cost-desc', sel=null;
+let matMethod='compose', matCat='all';   // 材料詳情的篩選（預設：製作 / 全部類別）
+const CATNAME={all:'全部',gear:'裝備',star:'★裝',hat:'頭飾'};
 
 const TABNAME={gear:'裝備',star:'★裝',hat:'頭飾'};
 function setTab(t){
@@ -336,22 +340,34 @@ function eqCardHtml(eid, kind, hlMatId){
 }
 function renderMatDetail(m){
   const rk=RMAP[m.rank];
-  const sec=(title,cls,kind,arr)=>{
-    if(!arr.length)return '';
-    const sorted=arr.slice().sort((a,b)=>{
-      const ra=recipe(EQMAP[a],kind), rb=recipe(EQMAP[b],kind);
-      return calcMats(rb.mats,rb.zeny).total-calcMats(ra.mats,ra.zeny).total;
-    });
-    return '<div class="grp"><h3><span class="dot '+cls+'"></span>'+title+' · '+arr.length+' 件</h3>'+
-      '<div class="eqcards">'+sorted.map(eid=>eqCardHtml(eid,kind,m.id)).join('')+'</div></div>';
-  };
+  const kind=matMethod;
+  const baseArr = kind==='compose'?m.compose:m.upgrade;       // 該方式下用到此材料的項目
+  const inCat = (eid,c)=> c==='all' || (EQMAP[eid]&&EQMAP[eid].cat===c);
+  const arr = baseArr.filter(eid=>inCat(eid,matCat));
+  const sorted=arr.slice().sort((a,b)=>{
+    const ra=recipe(EQMAP[a],kind), rb=recipe(EQMAP[b],kind);
+    return calcMats(rb.mats,rb.zeny).total-calcMats(ra.mats,ra.zeny).total;
+  });
+  // 製作/升級 切換（帶數量）
+  const methodChips=[['compose','製作',m.compose.length],['upgrade','升級',m.upgrade.length]]
+    .map(([v,l,n])=>'<span class="chip'+(matMethod===v?' on':'')+'" data-mm="'+v+'">'+l+' '+n+'</span>').join('');
+  // 類別切換（數量依目前製作/升級計算）
+  const catChips=['all','gear','star','hat']
+    .map(c=>{const n=baseArr.filter(eid=>inCat(eid,c)).length;
+      return '<span class="chip'+(matCat===c?' on':'')+'" data-mc="'+c+'">'+CATNAME[c]+' '+n+'</span>';}).join('');
+  const cards = sorted.length
+    ? '<div class="eqcards">'+sorted.map(eid=>eqCardHtml(eid,kind,m.id)).join('')+'</div>'
+    : '<div class="note" style="margin-top:14px">此分類在「'+(kind==='compose'?'製作':'升級')+'」中沒有用到此材料的項目</div>';
   $('right').innerHTML='<button class="back" id="back">← 返回</button>'+
     '<div class="dhead"><h2>'+esc(m.name)+'</h2>'+
     '<span class="meta"><span class="dotc" style="background:'+rk.color+'"></span> '+rk.name+' · 被 '+m.total+' 件使用</span></div>'+
-    '<div class="note">卡片顯示「該裝備的完整材料與加總成本」，目前材料以白字標示（升級為各階加總）</div>'+
-    sec('製作材料','c','compose',m.compose)+sec('升級材料','u','upgrade',m.upgrade);
+    '<div class="mchips">'+methodChips+'<span class="sep"></span>'+catChips+'</div>'+
+    '<div class="note">卡片顯示「該項目的完整材料與加總成本」，此材料以白字標示（升級為各階加總）</div>'+
+    cards;
   $('right').classList.add('show');
-  const b=$('back'); if(b)b.onclick=()=>$('right').classList.remove('show');
+  $('back').onclick=()=>$('right').classList.remove('show');
+  $('right').querySelectorAll('[data-mm]').forEach(c=>c.onclick=()=>{matMethod=c.dataset.mm;renderMatDetail(m);});
+  $('right').querySelectorAll('[data-mc]').forEach(c=>c.onclick=()=>{matCat=c.dataset.mc;renderMatDetail(m);});
 }
 
 // ---------- 裝備分頁 ----------
