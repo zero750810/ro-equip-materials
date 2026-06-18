@@ -36,6 +36,9 @@
   .row{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:9px;cursor:pointer;border:1px solid transparent}
   .row:hover{background:var(--panel)}
   .row.sel{background:var(--panel2);border-color:var(--accent)}
+  .row .pick{width:16px;height:16px;flex:0 0 16px;accent-color:var(--accent);cursor:pointer;margin:0}
+  .sellbl{font-size:12px;color:var(--muted);margin-right:2px}
+  .chip.clr{color:#e0a84e;border-color:#5a4326}
   .row .nm{flex:1;min-width:0}
   .row .nm b{font-size:14px;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .row .nm small{color:var(--muted);font-size:11px}
@@ -72,6 +75,10 @@
   .eqcard .top{display:flex;align-items:baseline;gap:8px;margin-bottom:7px}
   .eqcard .top b{font-size:14px;flex:1;min-width:0}
   .eqcard .top .tot{font-size:14px;color:var(--gold);font-weight:700;white-space:nowrap}
+  .eqcard .kbadge{font-size:11px;border-radius:5px;padding:1px 6px;border:1px solid var(--line);flex:0 0 auto}
+  .eqcard .kbadge.c{color:var(--compose);border-color:#27543f}
+  .eqcard .kbadge.u{color:var(--upgrade);border-color:#4a3560}
+  .eqcard .mcount{font-size:11px;color:var(--accent);background:#0c0f18;border:1px solid #2a3a55;border-radius:20px;padding:1px 8px;white-space:nowrap;flex:0 0 auto}
   .eqcard .mats{display:flex;flex-wrap:wrap;gap:4px 12px}
   .eqcard .mi{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:5px}
   .eqcard .mi.hl{color:var(--txt);font-weight:600}
@@ -99,6 +106,7 @@
       <input type="search" id="q">
       <div class="chips" id="chips"></div>
       <div class="chips" id="chips2"></div>
+      <div class="chips" id="selbar"></div>
     </div>
     <div class="list" id="list"></div>
   </div>
@@ -167,17 +175,21 @@ function recipe(e, kind){
 // ---- 分頁狀態 ----
 let TAB='mat', kw='', mFilter='all', eMethod='all', ePos='all', eSort='cost-desc', sel=null;
 let matMethod='compose', matCat='all';   // 材料詳情的篩選（預設：製作 / 全部類別）
+const selMats=new Set();                  // 多選比對：已勾選的材料 id
+let mResMethod='all', mResCat='all';      // 比對結果的篩選
+const material=id=>DB.materials.find(x=>x.id===id);
 const CATNAME={all:'全部',gear:'裝備',star:'★裝',hat:'頭飾'};
 
 const TABNAME={gear:'裝備',star:'★裝',hat:'頭飾'};
 function setTab(t){
   TAB=t; sel=null; kw=''; eMethod='all'; ePos='all';
+  selMats.clear(); mResMethod='all'; mResCat='all';
   document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on',x.dataset.tab===t));
   $('q').value='';
   $('q').placeholder=t==='mat'?'輸入材料名稱… 例：神之金屬、深淵花':('輸入'+TABNAME[t]+'名稱…');
   buildControls(); renderList();
   $('right').innerHTML='<div class="empty">'+(t==='mat'
-    ?'← 從左側點一個材料，看看哪些裝備會用到它（卡片內含該裝備的完整材料與加總成本）'
+    ?'← 勾選左側材料（可多選），這裡列出用到最多你勾選材料的裝備；或點材料名稱看單一詳情'
     :'← 從左側點一件'+TABNAME[t]+'，依你填的顏色單價估算製作／升級總花費（升級逐階列出）')+'</div>';
   $('right').classList.remove('show');
 }
@@ -224,6 +236,7 @@ function renderMatList(){
     html+=g.map(m=>{
       const c=mFilter==='compose'?m.compose.length:mFilter==='upgrade'?m.upgrade.length:m.total;
       return '<div class="row'+(m.id===sel?' sel':'')+'" data-id="'+m.id+'">'+
+        '<input type="checkbox" class="pick" data-pick="'+m.id+'"'+(selMats.has(m.id)?' checked':'')+'>'+
         '<span class="dotc" style="background:'+rk.color+'"></span>'+
         '<div class="nm"><b>'+esc(m.name)+'</b><small>'+m.compose.length+' 製作 · '+m.upgrade.length+' 升級</small></div>'+
         '<span class="cnt">'+c+'</span></div>';
@@ -231,17 +244,63 @@ function renderMatList(){
   }
   $('list').innerHTML=html;
 }
-function eqCardHtml(eid, kind, hlMatId){
+// 已選材料列（含逐一移除 + 清空）
+function syncSelBar(){
+  const sb=$('selbar'); if(!sb)return;
+  if(TAB!=='mat'||selMats.size===0){sb.innerHTML='';return;}
+  const chips=[...selMats].map(id=>{const m=material(id);const nm=m?m.name:('#'+id);
+    return '<span class="chip on" data-unpick="'+id+'">'+esc(nm)+' ✕</span>';}).join('');
+  sb.innerHTML='<span class="sellbl">已選 '+selMats.size+' 種：</span>'+chips+
+    '<span class="chip clr" data-clearpick="1">清空</span>';
+}
+// 多選比對結果：用到最多勾選材料的裝備（命中數→成本排序）
+function renderMatchResults(){
+  const inCat=(e,c)=> c==='all'||e.cat===c;
+  const pairs=[];
+  for(const e of DB.equips){
+    if(!inCat(e,mResCat))continue;
+    for(const kind of ['compose','upgrade']){
+      if(mResMethod!=='all'&&mResMethod!==kind)continue;
+      const rc=recipe(e,kind); if(!rc)continue;
+      let cnt=0; for(const m of rc.mats) if(selMats.has(m.id))cnt++;
+      if(!cnt)continue;
+      pairs.push({e,kind,cnt,cost:calcMats(rc.mats,rc.zeny).total});
+    }
+  }
+  pairs.sort((a,b)=>(b.cnt-a.cnt)||(b.cost-a.cost));
+  const methodChips=[['all','全部'],['compose','製作'],['upgrade','升級']]
+    .map(([v,l])=>'<span class="chip'+(mResMethod===v?' on':'')+'" data-rm="'+v+'">'+l+'</span>').join('');
+  const catChips=['all','gear','star','hat']
+    .map(c=>'<span class="chip'+(mResCat===c?' on':'')+'" data-rc="'+c+'">'+CATNAME[c]+'</span>').join('');
+  const cards = pairs.length
+    ? '<div class="eqcards">'+pairs.map(p=>eqCardHtml(p.e.id,p.kind,selMats,p.cnt)).join('')+'</div>'
+    : '<div class="note" style="margin-top:14px">目前的類別／製作升級篩選下，沒有裝備用到你勾選的材料</div>';
+  $('right').innerHTML='<button class="back" id="back">← 返回</button>'+
+    '<div class="dhead"><h2>比對結果</h2><span class="meta">已選 '+selMats.size+' 種材料 · 依命中數排序</span></div>'+
+    '<div class="mchips">'+methodChips+'<span class="sep"></span>'+catChips+'</div>'+
+    '<div class="note">每張卡顯示該裝備完整配方，命中你勾選的材料以白字標示；右上「命中 X 種」為符合數量。命中數相同時估價高的排前面。</div>'+
+    cards;
+  $('right').classList.add('show');
+  const b=$('back'); if(b)b.onclick=()=>$('right').classList.remove('show');
+  $('right').querySelectorAll('[data-rm]').forEach(c=>c.onclick=()=>{mResMethod=c.dataset.rm;renderMatchResults();});
+  $('right').querySelectorAll('[data-rc]').forEach(c=>c.onclick=()=>{mResCat=c.dataset.rc;renderMatchResults();});
+}
+function eqCardHtml(eid, kind, hl, matchCount){
   const e=EQMAP[eid]; if(!e)return '';
   const rc=recipe(e,kind); if(!rc)return '';
   const t=calcMats(rc.mats, rc.zeny);
+  const isHl = id => hl ? (hl.has ? hl.has(id) : hl===id) : false;
   const mline=rc.mats.slice().sort((a,b)=>(b.rank-a.rank)||(b.num-a.num)).map(m=>{
     const isZ=m.id===DB.zenyId; const rk=RMAP[m.rank]||RANKS[0];
-    return '<span class="mi'+(m.id===hlMatId?' hl':'')+'"><span class="dotc" style="background:'+(isZ?'var(--gold)':rk.color)+'"></span>'+
+    return '<span class="mi'+(isHl(m.id)?' hl':'')+'"><span class="dotc" style="background:'+(isZ?'var(--gold)':rk.color)+'"></span>'+
       esc(m.name)+' <b>×'+fmtNum(m.num)+'</b></span>';
   }).join('');
   const zline=rc.zeny?'<span class="mi"><span class="dotc" style="background:var(--gold)"></span>Zeny <b>×'+fmtNum(rc.zeny)+'</b></span>':'';
-  return '<div class="eqcard"><div class="top"><b>'+esc(e.name)+'</b><span class="tot">'+fmt(t.total)+'z</span></div>'+
+  const extra = matchCount!=null
+    ? (kind==='compose'?'<span class="kbadge c">製作</span>':'<span class="kbadge u">升級</span>')+
+      '<span class="mcount">命中 '+matchCount+' 種</span>'
+    : '';
+  return '<div class="eqcard"><div class="top"><b>'+esc(e.name)+'</b>'+extra+'<span class="tot">'+fmt(t.total)+'z</span></div>'+
     '<div class="mats">'+mline+zline+'</div>'+
     (t.unpriced?'<div class="warn">⚠ 含未定價顏色，實際更高</div>':'')+'</div>';
 }
@@ -345,16 +404,35 @@ function renderEqDetail(e,kind){
 }
 
 // ---- 共用 ----
-function renderList(){ TAB==='mat'?renderMatList():renderEqList(); }
+function renderList(){ TAB==='mat'?renderMatList():renderEqList(); syncSelBar(); }
 function rerenderRight(){
+  if(TAB==='mat'){
+    if(selMats.size>=1){renderMatchResults();return;}
+    if(sel!=null){const m=material(sel); if(m){renderMatDetail(m);return;}}
+    $('right').innerHTML='<div class="empty">← 勾選左側材料（可多選），這裡列出用到最多你勾選材料的裝備；或點材料名稱看單一詳情</div>';
+    $('right').classList.remove('show');
+    return;
+  }
   if(sel==null)return;
-  if(TAB==='mat'){const m=DB.materials.find(x=>x.id===sel); if(m)renderMatDetail(m);}
-  else{const [id,kind]=String(sel).split('|');const e=EQMAP[+id]; if(e)renderEqDetail(e,kind);}
+  const [id,kind]=String(sel).split('|');const e=EQMAP[+id]; if(e)renderEqDetail(e,kind);
 }
 $('list').addEventListener('click',ev=>{
+  const cb=ev.target.closest('input.pick');
+  if(cb){
+    const id=+cb.dataset.pick;
+    if(cb.checked)selMats.add(id); else selMats.delete(id);
+    syncSelBar(); rerenderRight();
+    return;
+  }
   const el=ev.target.closest('.row'); if(!el)return;
-  if(TAB==='mat'){sel=+el.dataset.id;const m=DB.materials.find(x=>x.id===sel);renderMatList();renderMatDetail(m);}
+  if(TAB==='mat'){sel=+el.dataset.id;renderMatList();rerenderRight();}
   else{const id=+el.dataset.id,kind=el.dataset.kind;sel=id+'|'+kind;renderEqList();renderEqDetail(EQMAP[id],kind);}
+});
+$('selbar').addEventListener('click',ev=>{
+  const c=ev.target.closest('.chip'); if(!c)return;
+  if(c.dataset.clearpick)selMats.clear();
+  else if(c.dataset.unpick)selMats.delete(+c.dataset.unpick);
+  renderMatList(); syncSelBar(); rerenderRight();
 });
 $('q').addEventListener('input',e=>{kw=e.target.value.trim().toLowerCase();renderList();});
 function chipClick(e){
